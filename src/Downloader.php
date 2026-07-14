@@ -18,8 +18,17 @@ class Downloader
             throw new Exception("Link inválido. Por favor, insira um link no formato https://github.com/usuario/repositorio");
         }
         
-        // O nome do plugin é padronizado no GLPI como lowercase
-        $pluginName = strtolower($parts[1]); 
+        $githubUser = preg_replace('/[^a-zA-Z0-9_\-]/', '', $parts[0]);
+        $githubRepo = preg_replace('/[^a-zA-Z0-9_\-]/', '', $parts[1]);
+        
+        if (empty($githubUser) || empty($githubRepo)) {
+            throw new Exception("Link inválido. Repositório contendo caracteres não permitidos.");
+        }
+        
+        $repo = $githubUser . '/' . $githubRepo;
+        
+        // O nome do plugin é padronizado no GLPI como lowercase, sem traços ou caracteres especiais
+        $pluginName = strtolower(preg_replace('/[^a-zA-Z0-9_]/', '', $githubRepo)); 
         
         $apiUrl = "https://api.github.com/repos/{$repo}/releases/latest";
         
