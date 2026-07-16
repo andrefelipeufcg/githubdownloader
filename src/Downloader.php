@@ -61,21 +61,73 @@ class Downloader
         $tarFile = GLPI_TMP_DIR . "/{$pluginName}-{$tag}.tar.gz";
         
         // Baixando o código-fonte da release
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $tarUrl);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'GLPI-GitHub-Downloader-Plugin');
-        $fileData = curl_exec($ch);
-        $downloadHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        
-        if ($downloadHttpCode !== 200 || !$fileData) {
-            throw new Exception("Falha ao baixar o arquivo da versão {$tag} do GitHub.");
+        $fp = fopen($tarFile, 'w');
+        if (!$fp) {
+            throw new Exception("Não foi possível criar o arquivo temporário em " . GLPI_TMP_DIR);
+        }
+
+        $maxRedirects = 3;
+        $redirectCount = 0;
+        $currentUrl = $tarUrl;
+        $downloadSuccess = false;
+
+        while ($redirectCount < $maxRedirects) {
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $currentUrl);
+            curl_setopt($ch, CURLOPT_FILE, $fp);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false); // Manually handle redirects for SSRF mitigation
+            curl_setopt($ch, CURLOPT_USERAGENT, 'GLPI-GitHub-Downloader-Plugin');
+            curl_setopt($ch, CURLOPT_HEADER, false);
+            
+            // Limit download size to 50MB
+            curl_setopt($ch, CURLOPT_NOPROGRESS, false);
+            curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, function($ch, $download_size, $downloaded, $upload_size, $uploaded) {
+                if ($downloaded > 52428800) {
+                    return 1; // Abort download
+                }
+                return 0;
+            });
+            
+            curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $redirectUrl = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+            $error = curl_error($ch);
+            curl_close($ch);
+            
+            if ($error && strpos($error, 'aborted') !== false) {
+                fclose($fp);
+                unlink($tarFile);
+                throw new Exception("O arquivo baixado excede o limite de tamanho permitido (50MB).");
+            }
+
+            if ($httpCode >= 300 && $httpCode < 400 && !empty($redirectUrl)) {
+                $parsedHost = parse_url($redirectUrl, PHP_URL_HOST);
+                // Mitigate SSRF: Only follow redirects to github domains
+                if (!preg_match('/(github\.com|githubusercontent\.com)$/', $parsedHost)) {
+                    fclose($fp);
+                    unlink($tarFile);
+                    throw new Exception("Redirecionamento bloqueado para domínio não confiável: " . $parsedHost);
+                }
+                $currentUrl = $redirectUrl;
+                $redirectCount++;
+                // Rewind file pointer for the new request
+                rewind($fp);
+                ftruncate($fp, 0);
+            } elseif ($httpCode === 200) {
+                $downloadSuccess = true;
+                break;
+            } else {
+                break;
+            }
         }
         
-        if (file_put_contents($tarFile, $fileData) === false) {
-            throw new Exception("Falha ao salvar o arquivo baixado em " . GLPI_TMP_DIR);
+        fclose($fp);
+
+        if (!$downloadSuccess) {
+            if (file_exists($tarFile)) {
+                unlink($tarFile);
+            }
+            throw new Exception("Falha ao baixar o arquivo da versão {$tag} do GitHub. (HTTP $httpCode)");
         }
         
         $extractDir = GLPI_TMP_DIR . "/{$pluginName}-extract-" . time();
@@ -87,6 +139,18 @@ class Downloader
         // Extraindo a versão baixada
         try {
             $phar = new PharData($tarFile);
+            
+            // Mitigação contra Zip Slip: inspecionar o arquivo antes de extrair
+            $iterator = new \RecursiveIteratorIterator($phar);
+            foreach ($iterator as $file) {
+                $path = $file->getPathname();
+                $internalPath = str_replace('phar://' . $tarFile . '/', '', str_replace('\\', '/', $path));
+                
+                if (strpos($internalPath, '../') !== false || strpos($internalPath, '..\\') !== false || str_starts_with($internalPath, '/')) {
+                    throw new Exception("O arquivo baixado contém caminhos de extração inseguros (Zip Slip). Operação abortada.");
+                }
+            }
+
             $phar->extractTo($extractDir, null, true);
         } catch (Exception $e) {
             unlink($tarFile);

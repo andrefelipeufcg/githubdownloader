@@ -6,6 +6,13 @@ use GlpiPlugin\Githubdownloader\Downloader;
 
 Session::checkRight("config", UPDATE);
 
+$is_superadmin = (isset($_SESSION['glpiactiveprofile']['id']) && $_SESSION['glpiactiveprofile']['id'] == 4) 
+              || (isset($_SESSION['glpiactiveprofile']['name']) && $_SESSION['glpiactiveprofile']['name'] === 'Super-Admin');
+
+if (!$is_superadmin) {
+    Html::displayRightError();
+}
+
 if (isset($_POST["download"])) {
     $url = $_POST["github_url"] ?? '';
     
@@ -26,7 +33,7 @@ if (isset($_POST["download"])) {
 Html::header('GitHub Downloader', '', "config", "plugins");
 
 echo "<div class='center'>";
-echo "<form method='post' action='config.form.php'>";
+echo "<form method='post' action='config.form.php' onsubmit='return confirm(\"ATENÇÃO: Você está prestes a baixar e instalar código de uma fonte externa. Se o repositório não for confiável ou tiver sido comprometido, isso pode resultar em execução de código malicioso no seu servidor. Você tem certeza que confia neste repositório?\");'>";
 echo "<table class='tab_cadre_fixe'>";
 echo "<tr><th colspan='2'>Baixar Plugin do GitHub</th></tr>";
 echo "<tr class='tab_bg_1'>";
