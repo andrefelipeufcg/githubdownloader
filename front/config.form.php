@@ -18,16 +18,18 @@ if (isset($_POST["download"])) {
     
     if (empty($url)) {
         Session::addMessageAfterRedirect("A URL do GitHub é obrigatória.", false, ERROR);
+        Html::back();
     } else {
         $downloader = new Downloader();
         try {
             $result = $downloader->downloadAndInstall($url);
             Session::addMessageAfterRedirect($result, false, INFO);
+            Html::redirect($CFG_GLPI['root_doc'] . '/front/plugin.php');
         } catch (Exception $e) {
             Session::addMessageAfterRedirect($e->getMessage(), false, ERROR);
+            Html::back();
         }
     }
-    Html::back();
 }
 
 Html::header('GitHub Downloader', '', "config", "plugins");
