@@ -2,7 +2,7 @@
 
 use Glpi\Plugin\Hooks;
 
-define('PLUGIN_GITHUBDOWNLOADER_VERSION', '1.0.1');
+define('PLUGIN_GITHUBDOWNLOADER_VERSION', '1.0.2');
 define('PLUGIN_GITHUBDOWNLOADER_MIN_GLPI', '10.0.0');
 
 function plugin_githubdownloader_boot(): void

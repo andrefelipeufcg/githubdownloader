@@ -52,13 +52,31 @@ class Downloader
         
         $tag = $data['tag_name'];
         $tarUrl = "https://github.com/{$repo}/archive/refs/tags/{$tag}.tar.gz";
+        $isZip = false;
+
+        if (!empty($data['assets']) && is_array($data['assets'])) {
+            foreach ($data['assets'] as $asset) {
+                if (isset($asset['name']) && isset($asset['browser_download_url'])) {
+                    if (preg_match('/\.zip$/i', $asset['name'])) {
+                        $tarUrl = $asset['browser_download_url'];
+                        $isZip = true;
+                        break;
+                    } elseif (preg_match('/\.tar\.gz$/i', $asset['name'])) {
+                        $tarUrl = $asset['browser_download_url'];
+                        $isZip = false;
+                        break;
+                    }
+                }
+            }
+        }
         
         $pluginsDir = GLPI_ROOT . '/plugins';
         if (!is_writable($pluginsDir)) {
             throw new Exception("O diretório de plugins (" . $pluginsDir . ") não tem permissão de escrita para o processo do servidor web.");
         }
         
-        $tarFile = GLPI_TMP_DIR . "/{$pluginName}-{$tag}.tar.gz";
+        $ext = $isZip ? '.zip' : '.tar.gz';
+        $tarFile = GLPI_TMP_DIR . "/{$pluginName}-{$tag}{$ext}";
         
         // Baixando o código-fonte da release
         $fp = fopen($tarFile, 'w');
@@ -138,20 +156,38 @@ class Downloader
         
         // Extraindo a versão baixada
         try {
-            $phar = new PharData($tarFile);
-            
-            // Mitigação contra Zip Slip: inspecionar o arquivo antes de extrair
-            $iterator = new \RecursiveIteratorIterator($phar);
-            foreach ($iterator as $file) {
-                $path = $file->getPathname();
-                $internalPath = str_replace('phar://' . $tarFile . '/', '', str_replace('\\', '/', $path));
-                
-                if (strpos($internalPath, '../') !== false || strpos($internalPath, '..\\') !== false || str_starts_with($internalPath, '/')) {
-                    throw new Exception("O arquivo baixado contém caminhos de extração inseguros (Zip Slip). Operação abortada.");
+            if ($isZip) {
+                $zip = new \ZipArchive();
+                if ($zip->open($tarFile) === true) {
+                    for ($i = 0; $i < $zip->numFiles; $i++) {
+                        $stat = $zip->statIndex($i);
+                        $internalPath = str_replace('\\', '/', $stat['name']);
+                        if (strpos($internalPath, '../') !== false || str_starts_with($internalPath, '/')) {
+                            $zip->close();
+                            throw new Exception("O arquivo baixado contém caminhos de extração inseguros (Zip Slip). Operação abortada.");
+                        }
+                    }
+                    $zip->extractTo($extractDir);
+                    $zip->close();
+                } else {
+                    throw new Exception("Não foi possível abrir o arquivo ZIP baixado.");
                 }
-            }
+            } else {
+                $phar = new PharData($tarFile);
+                
+                // Mitigação contra Zip Slip: inspecionar o arquivo antes de extrair
+                $iterator = new \RecursiveIteratorIterator($phar);
+                foreach ($iterator as $file) {
+                    $path = $file->getPathname();
+                    $internalPath = str_replace('phar://' . $tarFile . '/', '', str_replace('\\', '/', $path));
+                    
+                    if (strpos($internalPath, '../') !== false || strpos($internalPath, '..\\') !== false || str_starts_with($internalPath, '/')) {
+                        throw new Exception("O arquivo baixado contém caminhos de extração inseguros (Zip Slip). Operação abortada.");
+                    }
+                }
 
-            $phar->extractTo($extractDir, null, true);
+                $phar->extractTo($extractDir, null, true);
+            }
         } catch (Exception $e) {
             unlink($tarFile);
             $this->removeDirectory($extractDir);
