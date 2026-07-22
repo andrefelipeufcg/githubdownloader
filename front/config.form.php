@@ -13,6 +13,9 @@ if (!$is_superadmin) {
     Html::displayRightError();
 }
 
+/** @var array $CFG_GLPI */
+global $CFG_GLPI;
+
 if (isset($_POST["download"])) {
     $url = $_POST["github_url"] ?? '';
     
@@ -24,13 +27,16 @@ if (isset($_POST["download"])) {
         try {
             $result = $downloader->downloadAndInstall($url);
             Session::addMessageAfterRedirect($result, false, INFO);
-            Html::redirect($CFG_GLPI['root_doc'] . '/front/plugin.php');
+            $pluginPageUrl = $CFG_GLPI['root_doc'] . '/front/plugin.php';
+            header("Location: $pluginPageUrl");
+            exit();
         } catch (Exception $e) {
             Session::addMessageAfterRedirect($e->getMessage(), false, ERROR);
             Html::back();
         }
     }
 }
+
 
 Html::header('GitHub Downloader', '', "config", "plugins");
 
